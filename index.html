@@ -1,12 +1,38 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  Search, Filter, Plus, Edit2, Trash2, Download, Upload, 
-  CheckCircle, XCircle, Box, Activity, FileText, Settings, X, ChevronLeft, ChevronRight,
-  Info, Lightbulb, BookOpen
-} from 'lucide-react';
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SupplyClean - Gestão de PDM</title>
+  
+  <!-- Carregando Tailwind CSS para os Estilos -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Carregando FontAwesome para os Ícones -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <!-- Carregando React e ReactDOM -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  
+  <!-- Carregando Babel para traduzir o JSX direto no navegador -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-// --- MOCK DATA INITIALIZER BASED ON USER SNIPPET ---
-const initialSnippet = `Produto;Descrição;Especificação;Tipo;Unidade Medida;Conta Contábil;Status
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+
+  <!-- A aplicação React será renderizada dentro desta div -->
+  <div id="root"></div>
+
+  <!-- Script da Aplicação -->
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    // --- DADOS MOCK INICIAIS BASEADOS NA SUA PLANILHA ---
+    const initialSnippet = `Produto;Descrição;Especificação;Tipo;Unidade Medida;Conta Contábil;Status
 00001304;ABACATE;;MC;KG;31010306;ATIVO
 00001305;ABACAXI;;MC;PC;31010306;ATIVO
 00002839;ABAFADOR DE RUIDO;;MC;UN;31010315;ATIVO
@@ -18,531 +44,511 @@ const initialSnippet = `Produto;Descrição;Especificação;Tipo;Unidade Medida;
 00040025;ENVELOPE MEIO SACO;Serviço de confecção de envelope meio saco;SV;SV;31010618;ATIVO
 00040026;ACETATO DE ZINCO DIHIDRATADO P.A - 500G;"Fórmula: (CH3COO)2Zn * 2 H2O; Peso Molecular: 219.49 g/mol; Ensaio: 99.5 %; CAS: 5970-45-6; Densidade de 1.74 g/cm3 (20 °C), com FISPQ e certificado de análise. Frasco com 250 g. Prazo de validade do item: não deve ser inferior a 80% da validade total.";MC;UN;31010309004;ATIVO`;
 
-// --- UTILITIES ---
+    // --- FUNÇÕES UTILITÁRIAS ---
+    // Analisador robusto de CSV
+    const parseCSVLine = (text) => {
+      let ret = [''], i = 0, p = '', s = true;
+      for (let l = text.length; i < l; i++) {
+        let c = text[i];
+        if (c === '"') {
+          if (s && c === '"') s = !s;
+          else if (!s && i + 1 < l && text[i + 1] === '"') { ret[ret.length - 1] += '"'; i++; }
+          else if (!s && c === '"') s = !s;
+        } else if (c === ';' && s) { ret.push(''); }
+        else { ret[ret.length - 1] += c; }
+      }
+      return ret.map(v => v.trim());
+    };
 
-// Robust CSV Line Parser (handles semicolons inside quotes)
-const parseCSVLine = (text) => {
-  let ret = [''], i = 0, p = '', s = true;
-  for (let l = text.length; i < l; i++) {
-    let c = text[i];
-    if (c === '"') {
-      if (s && c === '"') s = !s;
-      else if (!s && i + 1 < l && text[i + 1] === '"') { ret[ret.length - 1] += '"'; i++; }
-      else if (!s && c === '"') s = !s;
-    } else if (c === ';' && s) { ret.push(''); }
-    else { ret[ret.length - 1] += c; }
-  }
-  return ret.map(v => v.trim());
-};
+    // Inteligência para extrair medidas e cores
+    const extractFeatures = (spec) => {
+      if (!spec) return { medida: '-', cor: '-', outros: '-' };
+      const specLower = spec.toLowerCase();
+      
+      const medidaMatch = specLower.match(/\b\d+(?:[.,]\d+)?\s*(cm|mm|m|kg|g|ml|l|x\s*\d+|g\/cm3|g\/mol)\b/gi);
+      const medidas = medidaMatch ? [...new Set(medidaMatch)].join(', ') : '-';
 
-// Intelligence to extract features from specification text
-const extractFeatures = (spec) => {
-  if (!spec) return { medida: '-', cor: '-', outros: '-' };
-  
-  const specLower = spec.toLowerCase();
-  
-  // Extract Dimensions/Measurements (e.g., 500x500mm, 250 g, 500G, 1.74 g/cm3)
-  const medidaMatch = specLower.match(/\b\d+(?:[.,]\d+)?\s*(cm|mm|m|kg|g|ml|l|x\s*\d+|g\/cm3|g\/mol)\b/gi);
-  const medidas = medidaMatch ? [...new Set(medidaMatch)].join(', ') : '-';
+      const corMatch = specLower.match(/\b(branco|preto|azul|vermelho|amarelo|verde|cinza|prata|fosco|incolor|transparente)\b/gi);
+      const cores = corMatch ? [...new Set(corMatch)].join(', ') : '-';
 
-  // Extract Colors
-  const corMatch = specLower.match(/\b(branco|preto|azul|vermelho|amarelo|verde|cinza|prata|fosco|incolor|transparente)\b/gi);
-  const cores = corMatch ? [...new Set(corMatch)].join(', ') : '-';
+      return { medida: medidas, cor: cores, original: spec };
+    };
 
-  return { medida: medidas, cor: cores, original: spec };
-};
-
-// Main App Component
-export default function App() {
-  const [data, setData] = useState([]);
-  const [globalSearch, setGlobalSearch] = useState('');
-  const [filters, setFilters] = useState({
-    Status: '',
-    Tipo: '',
-    'Unidade Medida': ''
-  });
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
-
-  // Form State
-  const [formData, setFormData] = useState({
-    Produto: '', Descrição: '', Especificação: '', Tipo: '', 'Unidade Medida': '', 'Conta Contábil': '', Status: 'ATIVO'
-  });
-
-  // Initialize with mock data
-  useEffect(() => {
-    loadCSVData(initialSnippet);
-  }, []);
-
-  const loadCSVData = (csvText) => {
-    const lines = csvText.trim().split('\n');
-    const headers = parseCSVLine(lines[0]);
-    
-    const parsedData = lines.slice(1).map(line => {
-      const values = parseCSVLine(line);
-      const obj = {};
-      headers.forEach((header, index) => {
-        obj[header] = values[index] || '';
+    // --- COMPONENTE PRINCIPAL ---
+    function App() {
+      const [data, setData] = useState([]);
+      const [globalSearch, setGlobalSearch] = useState('');
+      const [filters, setFilters] = useState({
+        Status: '', Tipo: '', 'Unidade Medida': ''
       });
-      return obj;
-    });
-    
-    setData(parsedData.filter(item => item.Produto)); // Filter empty rows
-  };
+      const [isModalOpen, setIsModalOpen] = useState(false);
+      const [editingItem, setEditingItem] = useState(null);
+      const [currentPage, setCurrentPage] = useState(1);
+      const itemsPerPage = 10;
 
-  const handleFileUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        loadCSVData(event.target.result);
+      const [formData, setFormData] = useState({
+        Produto: '', Descrição: '', Especificação: '', Tipo: '', 'Unidade Medida': '', 'Conta Contábil': '', Status: 'ATIVO'
+      });
+
+      useEffect(() => {
+        loadCSVData(initialSnippet);
+      }, []);
+
+      const loadCSVData = (csvText) => {
+        const lines = csvText.trim().split('\n');
+        const headers = parseCSVLine(lines[0]);
+        const parsedData = lines.slice(1).map(line => {
+          const values = parseCSVLine(line);
+          const obj = {};
+          headers.forEach((header, index) => {
+            obj[header] = values[index] || '';
+          });
+          return obj;
+        });
+        setData(parsedData.filter(item => item.Produto));
       };
-      reader.readAsText(file);
-    }
-  };
 
-  const handleExportCSV = () => {
-    if (data.length === 0) return;
-    
-    const headers = Object.keys(data[0]);
-    const csvContent = [
-      headers.join(';'),
-      ...data.map(row => 
-        headers.map(header => {
-          let val = row[header] || '';
-          // Escape quotes and wrap in quotes if contains semicolon
-          if (val.includes(';') || val.includes('"') || val.includes('\n')) {
-            val = `"${val.replace(/"/g, '""')}"`;
-          }
-          return val;
-        }).join(';')
-      )
-    ].join('\n');
+      const handleFileUpload = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            loadCSVData(event.target.result);
+          };
+          reader.readAsText(file);
+        }
+      };
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.setAttribute('download', `Cadastro_Saneado_${new Date().toISOString().slice(0,10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  // --- FILTERING LOGIC ---
-  const filteredData = useMemo(() => {
-    return data.filter(item => {
-      // Global Search
-      const searchStr = Object.values(item).join(' ').toLowerCase();
-      const matchesSearch = searchStr.includes(globalSearch.toLowerCase());
-
-      // Column Filters
-      const matchesStatus = filters.Status ? item.Status.toUpperCase() === filters.Status.toUpperCase() : true;
-      const matchesTipo = filters.Tipo ? item.Tipo.toUpperCase() === filters.Tipo.toUpperCase() : true;
-      const matchesUnidade = filters['Unidade Medida'] ? item['Unidade Medida'].toUpperCase() === filters['Unidade Medida'].toUpperCase() : true;
-
-      return matchesSearch && matchesStatus && matchesTipo && matchesUnidade;
-    });
-  }, [data, globalSearch, filters]);
-
-  // Pagination Logic
-  const totalPages = Math.ceil(filteredData.length / itemsPerPage);
-  const currentData = filteredData.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
-
-  // KPIs
-  const totalItems = data.length;
-  const activeItems = data.filter(d => d.Status?.toUpperCase() === 'ATIVO').length;
-  const inactiveItems = totalItems - activeItems;
-  const uniqueTypes = new Set(data.map(d => d.Tipo)).size;
-
-  // Extract unique values for dropdown filters
-  const uniqueStatuses = [...new Set(data.map(d => d.Status?.toUpperCase()))].filter(Boolean);
-  const uniqueTipos = [...new Set(data.map(d => d.Tipo?.toUpperCase()))].filter(Boolean);
-  const uniqueUnidades = [...new Set(data.map(d => d['Unidade Medida']?.toUpperCase()))].filter(Boolean);
-
-  // --- CRUD HANDLERS ---
-  const openModal = (item = null) => {
-    if (item) {
-      setEditingItem(item);
-      setFormData(item);
-    } else {
-      setEditingItem(null);
-      // Auto-generate ID just for mockup
-      const nextId = (Math.max(...data.map(d => parseInt(d.Produto) || 0)) + 1).toString().padStart(8, '0');
-      setFormData({
-        Produto: nextId, Descrição: '', Especificação: '', Tipo: '', 'Unidade Medida': '', 'Conta Contábil': '', Status: 'ATIVO'
-      });
-    }
-    setIsModalOpen(true);
-  };
-
-  const closeModal = () => {
-    setIsModalOpen(false);
-    setEditingItem(null);
-  };
-
-  const handleSave = (e) => {
-    e.preventDefault();
-    if (editingItem) {
-      setData(data.map(d => d.Produto === formData.Produto ? formData : d));
-    } else {
-      setData([formData, ...data]);
-    }
-    closeModal();
-  };
-
-  const handleDelete = (id) => {
-    if (window.confirm('Tem certeza que deseja excluir este item permanentemente?')) {
-      setData(data.filter(d => d.Produto !== id));
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-900 pb-12">
-      {/* Top Header */}
-      <header className="bg-white border-b border-slate-200 px-6 py-4 flex flex-col md:flex-row justify-between items-center shadow-sm sticky top-0 z-10">
-        <div className="flex items-center gap-3 mb-4 md:mb-0">
-          <div className="bg-slate-900 p-2 rounded-lg">
-            <Box className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight">SupplyClean</h1>
-            <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">Gestão e Saneamento de PDM</p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <label className="cursor-pointer bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-sm">
-            <Upload className="w-4 h-4" />
-            <span>Importar CSV</span>
-            <input type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
-          </label>
-          <button 
-            onClick={handleExportCSV}
-            className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-sm"
-          >
-            <Download className="w-4 h-4" />
-            <span>Exportar Relatório</span>
-          </button>
-          <button 
-            onClick={() => openModal()}
-            className="bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-sm"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Novo Produto</span>
-          </button>
-        </div>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-6 mt-8">
+      const handleExportCSV = (exportType = 'ALL') => {
+        let dataToExport = data;
         
-        {/* Didactic Intro Banner */}
-        <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-5 mb-8 flex flex-col md:flex-row gap-4 items-start shadow-sm">
-          <div className="bg-indigo-100 p-3 rounded-xl text-indigo-700 shrink-0">
-            <BookOpen className="w-6 h-6" />
-          </div>
-          <div>
-            <h2 className="text-lg font-bold text-indigo-900 mb-1">Guia Rápido de Saneamento de PDM</h2>
-            <p className="text-sm text-indigo-800 leading-relaxed mb-3">
-              Bem-vindo ao <strong>SupplyClean</strong>. Este painel interativo foi desenvolvido para auxiliar na limpeza, padronização e gestão de seus cadastros de materiais. Como funciona:
-            </p>
-            <ul className="text-sm text-indigo-800 space-y-1.5 ml-5 list-disc marker:text-indigo-400">
-              <li><strong>Importe</strong> sua planilha atualizada do ERP (usando o botão "Importar CSV" no topo).</li>
-              <li><strong>Analise</strong> as anomalias usando a busca abrangente e os filtros automáticos por Status, Tipo e Unidade.</li>
-              <li><strong>Corrija</strong> as descrições diretamente na plataforma. O sistema extrai automaticamente medidas e cores da <em>Especificação Técnica</em> para facilitar a identificação de discrepâncias.</li>
-              <li><strong>Exporte</strong> a base tratada para reinserção no seu sistema de gestão de compras.</li>
-            </ul>
-          </div>
-        </div>
+        if (exportType === 'NEW') {
+          dataToExport = data.filter(item => item._isNew);
+          if (dataToExport.length === 0) {
+            alert('Nenhum produto novo foi cadastrado nesta sessão.');
+            return;
+          }
+        } else if (data.length === 0) {
+          return;
+        }
 
-        {/* KPI Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <KPICard title="Total de Itens" value={totalItems} icon={<FileText />} color="bg-blue-50 text-blue-700" />
-          <KPICard title="Itens Ativos" value={activeItems} icon={<CheckCircle />} color="bg-emerald-50 text-emerald-700" />
-          <KPICard title="Itens Inativos" value={inactiveItems} icon={<XCircle />} color="bg-rose-50 text-rose-700" />
-          <KPICard title="Categorias (Tipo)" value={uniqueTypes} icon={<Activity />} color="bg-purple-50 text-purple-700" />
-        </div>
+        // Remover campos de controle interno (ex: _isNew) dos cabeçalhos na exportação
+        const headers = Object.keys(data[0] || {}).filter(k => !k.startsWith('_'));
+        
+        const csvContent = [
+          headers.join(';'),
+          ...dataToExport.map(row => 
+            headers.map(header => {
+              let val = row[header] || '';
+              // Garante que o status vá como NOVO se for um produto novo
+              if (header === 'Status' && row._isNew) {
+                val = 'NOVO';
+              }
+              if (val.includes(';') || val.includes('"') || val.includes('\n')) {
+                val = `"${val.replace(/"/g, '""')}"`;
+              }
+              return val;
+            }).join(';')
+          )
+        ].join('\n');
 
-        {/* Filters and Search Bar */}
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col lg:flex-row gap-4 items-center justify-between">
-          <div className="relative w-full lg:w-1/2">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Search className="h-5 w-5 text-slate-400" />
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        const fileName = exportType === 'NEW' ? `Novos_Produtos_${new Date().toISOString().slice(0,10)}.csv` : `Cadastro_Saneado_${new Date().toISOString().slice(0,10)}.csv`;
+        link.setAttribute('download', fileName);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      };
+
+      // Filtros
+      const filteredData = useMemo(() => {
+        return data.filter(item => {
+          const searchStr = Object.values(item).join(' ').toLowerCase();
+          const matchesSearch = searchStr.includes(globalSearch.toLowerCase());
+          const matchesStatus = filters.Status ? item.Status.toUpperCase() === filters.Status.toUpperCase() : true;
+          const matchesTipo = filters.Tipo ? item.Tipo.toUpperCase() === filters.Tipo.toUpperCase() : true;
+          const matchesUnidade = filters['Unidade Medida'] ? item['Unidade Medida'].toUpperCase() === filters['Unidade Medida'].toUpperCase() : true;
+          return matchesSearch && matchesStatus && matchesTipo && matchesUnidade;
+        });
+      }, [data, globalSearch, filters]);
+
+      // Paginação
+      const totalPages = Math.ceil(filteredData.length / itemsPerPage);
+      const currentData = filteredData.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+      // KPIs
+      const totalItems = data.length;
+      const activeItems = data.filter(d => d.Status?.toUpperCase() === 'ATIVO').length;
+      const inactiveItems = totalItems - activeItems;
+      const uniqueTypes = new Set(data.map(d => d.Tipo)).size;
+
+      // Opções únicas para selects
+      const uniqueStatuses = [...new Set(data.map(d => d.Status?.toUpperCase()))].filter(Boolean);
+      const uniqueTipos = [...new Set(data.map(d => d.Tipo?.toUpperCase()))].filter(Boolean);
+      const uniqueUnidades = [...new Set(data.map(d => d['Unidade Medida']?.toUpperCase()))].filter(Boolean);
+
+      // CRUD
+      const openModal = (item = null) => {
+        if (item) {
+          setEditingItem(item);
+          setFormData(item);
+        } else {
+          setEditingItem(null);
+          const nextId = (Math.max(...data.map(d => parseInt(d.Produto) || 0)) + 1).toString().padStart(8, '0');
+          setFormData({ Produto: nextId, Descrição: '', Especificação: '', Tipo: '', 'Unidade Medida': '', 'Conta Contábil': '', Status: 'ATIVO' });
+        }
+        setIsModalOpen(true);
+      };
+
+      const closeModal = () => {
+        setIsModalOpen(false);
+        setEditingItem(null);
+      };
+
+      const handleSave = (e) => {
+        e.preventDefault();
+        if (editingItem) {
+          setData(data.map(d => d.Produto === formData.Produto ? formData : d));
+        } else {
+          // Salva no repositório marcando a flag _isNew e força o status visual para NOVO
+          setData([{...formData, Status: 'NOVO', _isNew: true}, ...data]);
+        }
+        closeModal();
+      };
+
+      const handleDelete = (id) => {
+        if (window.confirm('Tem certeza que deseja excluir este item permanentemente?')) {
+          setData(data.filter(d => d.Produto !== id));
+        }
+      };
+
+      return (
+        <div className="min-h-screen pb-12">
+          {/* Header */}
+          <header className="bg-white border-b border-slate-200 px-6 py-4 flex flex-col md:flex-row justify-between items-center shadow-sm sticky top-0 z-10">
+            <div className="flex items-center gap-3 mb-4 md:mb-0">
+              <div className="bg-slate-900 p-2 rounded-lg flex items-center justify-center w-10 h-10">
+                <i className="fas fa-box text-white text-lg"></i>
+              </div>
+              <div>
+                <h1 className="text-xl font-bold tracking-tight">SupplyClean</h1>
+                <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">Gestão e Saneamento de PDM</p>
+              </div>
             </div>
-            <input
-              type="text"
-              className="block w-full pl-10 pr-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-slate-900 sm:text-sm bg-slate-50 transition-all"
-              placeholder="Busca abrangente (código, descrição, especificação, etc)..."
-              value={globalSearch}
-              onChange={(e) => setGlobalSearch(e.target.value)}
-            />
-          </div>
 
-          <div className="flex gap-3 w-full lg:w-auto overflow-x-auto pb-2 lg:pb-0">
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-600">
-              <Filter className="w-4 h-4" /> Filtros:
-            </div>
-            <select 
-              className="border border-slate-300 rounded-lg text-sm p-2 bg-white min-w-[120px]"
-              value={filters.Status} onChange={(e) => setFilters({...filters, Status: e.target.value})}
-            >
-              <option value="">Status (Todos)</option>
-              {uniqueStatuses.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <select 
-              className="border border-slate-300 rounded-lg text-sm p-2 bg-white min-w-[120px]"
-              value={filters.Tipo} onChange={(e) => setFilters({...filters, Tipo: e.target.value})}
-            >
-              <option value="">Tipo (Todos)</option>
-              {uniqueTipos.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-            <select 
-              className="border border-slate-300 rounded-lg text-sm p-2 bg-white min-w-[120px]"
-              value={filters['Unidade Medida']} onChange={(e) => setFilters({...filters, 'Unidade Medida': e.target.value})}
-            >
-              <option value="">Unidade (Todas)</option>
-              {uniqueUnidades.map(u => <option key={u} value={u}>{u}</option>)}
-            </select>
-            {(filters.Status || filters.Tipo || filters['Unidade Medida']) && (
-              <button 
-                onClick={() => setFilters({Status: '', Tipo: '', 'Unidade Medida': ''})}
-                className="text-sm text-rose-600 hover:text-rose-800 font-medium flex items-center"
-              >
-                Limpar
+            <div className="flex items-center gap-3 w-full md:w-auto">
+              <label className="cursor-pointer bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-sm">
+                <i className="fas fa-upload text-slate-500"></i>
+                <span>Importar CSV</span>
+                <input type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
+              </label>
+              <button onClick={() => handleExportCSV('NEW')} className="bg-white border border-amber-200 hover:bg-amber-50 text-amber-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-sm">
+                <i className="fas fa-star text-amber-500"></i>
+                <span>Exportar Novos</span>
               </button>
-            )}
-          </div>
-        </div>
+              <button onClick={() => handleExportCSV('ALL')} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-sm">
+                <i className="fas fa-download text-slate-500"></i>
+                <span>Exportar Tudo</span>
+              </button>
+              <button onClick={() => openModal()} className="bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-sm">
+                <i className="fas fa-plus"></i>
+                <span>Novo Produto</span>
+              </button>
+            </div>
+          </header>
 
-        {/* Data Table Section */}
-        <div className="mb-3 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-          <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-            <Box className="w-5 h-5 text-slate-500" />
-            Base de Materiais
-          </h3>
-          <div className="flex items-start md:items-center gap-2 text-xs text-slate-600 bg-amber-50 px-3 py-2 rounded-lg border border-amber-200/60 max-w-2xl">
-            <Lightbulb className="w-4 h-4 text-amber-500 shrink-0 mt-0.5 md:mt-0" />
-            <p>
-              <strong>Dica Didática:</strong> A coluna "Análise de Especificação" atua como um assistente inteligente. Ela lê o texto livre e cria <em>tags</em> de medidas e características isoladas para te ajudar a encontrar produtos duplicados com descrições levemente diferentes.
-            </p>
-          </div>
-        </div>
+          <main className="max-w-7xl mx-auto px-6 mt-8">
+            {/* Banner Didático */}
+            <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-5 mb-8 flex flex-col md:flex-row gap-4 items-start shadow-sm">
+              <div className="bg-indigo-100 p-3 rounded-xl text-indigo-700 shrink-0">
+                <i className="fas fa-book-open text-xl"></i>
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-indigo-900 mb-1">Guia Rápido de Saneamento de PDM</h2>
+                <p className="text-sm text-indigo-800 leading-relaxed mb-3">
+                  Bem-vindo ao <strong>SupplyClean</strong>. Este painel interativo foi desenvolvido para auxiliar na limpeza, padronização e gestão de seus cadastros de materiais. Como funciona:
+                </p>
+                <ul className="text-sm text-indigo-800 space-y-1.5 ml-5 list-disc marker:text-indigo-400">
+                  <li><strong>Importe</strong> sua planilha atualizada do ERP (usando o botão "Importar CSV" no topo).</li>
+                  <li><strong>Analise</strong> as anomalias usando a busca abrangente e os filtros automáticos por Status, Tipo e Unidade.</li>
+                  <li><strong>Corrija</strong> as descrições diretamente na plataforma. O sistema extrai automaticamente medidas e cores da <em>Especificação Técnica</em> para facilitar a identificação de discrepâncias.</li>
+                  <li><strong>Exporte</strong> a base tratada para reinserção no seu sistema de gestão de compras.</li>
+                </ul>
+              </div>
+            </div>
 
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-200">
-              <thead className="bg-slate-50">
-                <tr>
-                  <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Produto</th>
-                  <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider w-1/4">Descrição</th>
-                  <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider w-1/3">Análise de Especificação</th>
-                  <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Classificação</th>
-                  <th className="px-6 py-4 text-center text-xs font-bold text-slate-600 uppercase tracking-wider">Status</th>
-                  <th className="px-6 py-4 text-right text-xs font-bold text-slate-600 uppercase tracking-wider">Ações</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-slate-200">
-                {currentData.length > 0 ? currentData.map((item) => {
-                  const features = extractFeatures(item.Especificação);
-                  return (
-                    <tr key={item.Produto} className="hover:bg-slate-50 transition-colors group">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-slate-900">
-                        {item.Produto}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-slate-800 font-medium">
-                        {item.Descrição}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-slate-600">
-                        {item.Especificação ? (
-                          <div className="flex flex-col gap-2">
-                            <p className="line-clamp-2 text-xs text-slate-500 italic" title={item.Especificação}>
-                              "{item.Especificação}"
-                            </p>
-                            <div className="flex gap-2">
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100">
-                                Medidas: {features.medida}
-                              </span>
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-700 border border-amber-100">
-                                Cor/Mat.: {features.cor}
-                              </span>
-                            </div>
-                          </div>
-                        ) : (
-                          <span className="text-slate-400 italic text-xs">Sem especificação técnica</span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
-                        <div className="flex flex-col gap-1">
-                          <span className="flex items-center gap-1"><Settings className="w-3 h-3"/> Tipo: {item.Tipo}</span>
-                          <span className="flex items-center gap-1"><Box className="w-3 h-3"/> UN: {item['Unidade Medida']}</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                          item.Status?.toUpperCase() === 'ATIVO' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-                        }`}>
-                          {item.Status?.toUpperCase()}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => openModal(item)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md transition-colors" title="Editar">
-                            <Edit2 className="w-4 h-4" />
-                          </button>
-                          <button onClick={() => handleDelete(item.Produto)} className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-md transition-colors" title="Excluir">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                }) : (
-                  <tr>
-                    <td colSpan="6" className="px-6 py-12 text-center text-slate-500">
-                      Nenhum produto encontrado com os filtros aplicados.
-                    </td>
-                  </tr>
+            {/* KPIs */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+              <KPICard title="Total de Itens" value={totalItems} icon="fas fa-file-alt" color="bg-blue-50 text-blue-700" />
+              <KPICard title="Itens Ativos" value={activeItems} icon="fas fa-check-circle" color="bg-emerald-50 text-emerald-700" />
+              <KPICard title="Itens Inativos" value={inactiveItems} icon="fas fa-times-circle" color="bg-rose-50 text-rose-700" />
+              <KPICard title="Categorias (Tipo)" value={uniqueTypes} icon="fas fa-chart-line" color="bg-purple-50 text-purple-700" />
+            </div>
+
+            {/* Filtros e Busca */}
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col lg:flex-row gap-4 items-center justify-between">
+              <div className="relative w-full lg:w-1/2">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <i className="fas fa-search text-slate-400"></i>
+                </div>
+                <input
+                  type="text"
+                  className="block w-full pl-10 pr-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-slate-900 sm:text-sm bg-slate-50 transition-all outline-none"
+                  placeholder="Busca abrangente (código, descrição, especificação, etc)..."
+                  value={globalSearch}
+                  onChange={(e) => setGlobalSearch(e.target.value)}
+                />
+              </div>
+
+              <div className="flex gap-3 w-full lg:w-auto overflow-x-auto pb-2 lg:pb-0">
+                <div className="flex items-center gap-2 text-sm font-medium text-slate-600">
+                  <i className="fas fa-filter"></i> Filtros:
+                </div>
+                <select className="border border-slate-300 rounded-lg text-sm p-2 bg-white min-w-[120px] outline-none" value={filters.Status} onChange={(e) => setFilters({...filters, Status: e.target.value})}>
+                  <option value="">Status (Todos)</option>
+                  {uniqueStatuses.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <select className="border border-slate-300 rounded-lg text-sm p-2 bg-white min-w-[120px] outline-none" value={filters.Tipo} onChange={(e) => setFilters({...filters, Tipo: e.target.value})}>
+                  <option value="">Tipo (Todos)</option>
+                  {uniqueTipos.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <select className="border border-slate-300 rounded-lg text-sm p-2 bg-white min-w-[120px] outline-none" value={filters['Unidade Medida']} onChange={(e) => setFilters({...filters, 'Unidade Medida': e.target.value})}>
+                  <option value="">Unidade (Todas)</option>
+                  {uniqueUnidades.map(u => <option key={u} value={u}>{u}</option>)}
+                </select>
+                {(filters.Status || filters.Tipo || filters['Unidade Medida']) && (
+                  <button onClick={() => setFilters({Status: '', Tipo: '', 'Unidade Medida': ''})} className="text-sm text-rose-600 hover:text-rose-800 font-medium flex items-center">
+                    Limpar
+                  </button>
                 )}
-              </tbody>
-            </table>
-          </div>
-          
-          {/* Pagination */}
-          <div className="bg-slate-50 px-6 py-4 border-t border-slate-200 flex items-center justify-between">
-            <span className="text-sm text-slate-600 font-medium">
-              Mostrando <span className="font-bold">{(currentPage - 1) * itemsPerPage + 1}</span> a <span className="font-bold">{Math.min(currentPage * itemsPerPage, filteredData.length)}</span> de <span className="font-bold">{filteredData.length}</span> resultados
-            </span>
-            <div className="flex gap-2">
-              <button 
-                disabled={currentPage === 1}
-                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                className="p-1 rounded bg-white border border-slate-300 disabled:opacity-50 text-slate-700 hover:bg-slate-100"
-              >
-                <ChevronLeft className="w-5 h-5" />
-              </button>
-              <button 
-                disabled={currentPage === totalPages || totalPages === 0}
-                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                className="p-1 rounded bg-white border border-slate-300 disabled:opacity-50 text-slate-700 hover:bg-slate-100"
-              >
-                <ChevronRight className="w-5 h-5" />
-              </button>
+              </div>
             </div>
-          </div>
-        </div>
 
-      </main>
-
-      {/* Form Modal */}
-      {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="flex justify-between items-center px-6 py-4 border-b border-slate-200 bg-slate-50">
-              <h2 className="text-lg font-bold text-slate-900">
-                {editingItem ? 'Editar Produto' : 'Cadastrar Novo Produto'}
-              </h2>
-              <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 transition-colors">
-                <X className="w-6 h-6" />
-              </button>
+            {/* Secao de Tabela */}
+            <div className="mb-3 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <i className="fas fa-table text-slate-500"></i>
+                Base de Materiais
+              </h3>
+              <div className="flex items-start md:items-center gap-2 text-xs text-slate-600 bg-amber-50 px-3 py-2 rounded-lg border border-amber-200/60 max-w-2xl">
+                <i className="fas fa-lightbulb text-amber-500 shrink-0 mt-0.5 md:mt-0 text-sm"></i>
+                <p>
+                  <strong>Dica Didática:</strong> A coluna "Análise de Especificação" atua como um assistente inteligente. Ela lê o texto livre e cria <em>tags</em> de medidas e características isoladas para te ajudar a encontrar produtos duplicados com descrições levemente diferentes.
+                </p>
+              </div>
             </div>
-            
-            <div className="p-6 overflow-y-auto">
-              <form id="productForm" onSubmit={handleSave} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-sm font-bold text-slate-700">Código do Produto</label>
-                  <input required type="text" className="w-full p-2 border border-slate-300 rounded-lg bg-slate-100 focus:ring-2 focus:ring-slate-900" 
-                    value={formData.Produto} readOnly={!!editingItem} 
-                    onChange={e => setFormData({...formData, Produto: e.target.value})} 
-                  />
-                  {editingItem && <p className="text-xs text-slate-500">O código não pode ser alterado na edição.</p>}
+
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-200">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Produto</th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider w-1/4">Descrição</th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider w-1/3">Análise de Especificação</th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Classificação</th>
+                      <th className="px-6 py-4 text-center text-xs font-bold text-slate-600 uppercase tracking-wider">Status</th>
+                      <th className="px-6 py-4 text-right text-xs font-bold text-slate-600 uppercase tracking-wider">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-slate-200">
+                    {currentData.length > 0 ? currentData.map((item) => {
+                      const features = extractFeatures(item.Especificação);
+                      return (
+                        <tr key={item.Produto} className="hover:bg-slate-50 transition-colors group">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-slate-900">
+                            {item.Produto}
+                            {item._isNew && <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 align-middle">NOVO</span>}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-800 font-medium">{item.Descrição}</td>
+                          <td className="px-6 py-4 text-sm text-slate-600">
+                            {item.Especificação ? (
+                              <div className="flex flex-col gap-2">
+                                <p className="line-clamp-2 text-xs text-slate-500 italic" title={item.Especificação}>"{item.Especificação}"</p>
+                                <div className="flex gap-2">
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                    Medidas: {features.medida}
+                                  </span>
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-700 border border-amber-100">
+                                    Cor/Mat.: {features.cor}
+                                  </span>
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-slate-400 italic text-xs">Sem especificação técnica</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
+                            <div className="flex flex-col gap-1">
+                              <span className="flex items-center gap-1"><i className="fas fa-cog text-slate-400 text-[10px]"></i> Tipo: {item.Tipo}</span>
+                              <span className="flex items-center gap-1"><i className="fas fa-box text-slate-400 text-[10px]"></i> UN: {item['Unidade Medida']}</span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center">
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                              item.Status?.toUpperCase() === 'ATIVO' ? 'bg-emerald-100 text-emerald-800' : 
+                              item.Status?.toUpperCase() === 'NOVO' ? 'bg-blue-100 text-blue-800' : 'bg-rose-100 text-rose-800'
+                            }`}>
+                              {item.Status?.toUpperCase()}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                            <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => openModal(item)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-md transition-colors" title="Editar">
+                                <i className="fas fa-pen"></i>
+                              </button>
+                              <button onClick={() => handleDelete(item.Produto)} className="p-2 text-rose-600 hover:bg-rose-50 rounded-md transition-colors" title="Excluir">
+                                <i className="fas fa-trash"></i>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    }) : (
+                      <tr>
+                        <td colSpan="6" className="px-6 py-12 text-center text-slate-500">
+                          Nenhum produto encontrado com os filtros aplicados.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              
+              {/* Paginação */}
+              <div className="bg-slate-50 px-6 py-4 border-t border-slate-200 flex items-center justify-between">
+                <span className="text-sm text-slate-600 font-medium">
+                  Mostrando <span className="font-bold">{(currentPage - 1) * itemsPerPage + 1}</span> a <span className="font-bold">{Math.min(currentPage * itemsPerPage, filteredData.length)}</span> de <span className="font-bold">{filteredData.length}</span> resultados
+                </span>
+                <div className="flex gap-2">
+                  <button disabled={currentPage === 1} onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))} className="w-8 h-8 flex items-center justify-center rounded bg-white border border-slate-300 disabled:opacity-50 text-slate-700 hover:bg-slate-100">
+                    <i className="fas fa-chevron-left"></i>
+                  </button>
+                  <button disabled={currentPage === totalPages || totalPages === 0} onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))} className="w-8 h-8 flex items-center justify-center rounded bg-white border border-slate-300 disabled:opacity-50 text-slate-700 hover:bg-slate-100">
+                    <i className="fas fa-chevron-right"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </main>
+
+          {/* Modal do Formulário */}
+          {isModalOpen && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
+                <div className="flex justify-between items-center px-6 py-4 border-b border-slate-200 bg-slate-50">
+                  <h2 className="text-lg font-bold text-slate-900">
+                    {editingItem ? 'Editar Produto' : 'Cadastrar Novo Produto'}
+                  </h2>
+                  <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 transition-colors">
+                    <i className="fas fa-times text-xl"></i>
+                  </button>
                 </div>
                 
-                <div className="space-y-1">
-                  <label className="text-sm font-bold text-slate-700">Status</label>
-                  <select className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 bg-white"
-                    value={formData.Status} onChange={e => setFormData({...formData, Status: e.target.value})}
-                  >
-                    <option value="ATIVO">ATIVO</option>
-                    <option value="INATIVO">INATIVO</option>
-                  </select>
-                </div>
+                <div className="p-6 overflow-y-auto">
+                  <form id="productForm" onSubmit={handleSave} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-sm font-bold text-slate-700">Código do Produto</label>
+                      <input required type="text" className="w-full p-2 border border-slate-300 rounded-lg bg-slate-100 focus:ring-2 focus:ring-slate-900 outline-none" 
+                        value={formData.Produto} readOnly={!!editingItem} 
+                        onChange={e => setFormData({...formData, Produto: e.target.value})} 
+                      />
+                      {editingItem && <p className="text-xs text-slate-500">O código não pode ser alterado na edição.</p>}
+                    </div>
+                    
+                    <div className="space-y-1">
+                      <label className="text-sm font-bold text-slate-700">Status</label>
+                      <select className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 bg-white outline-none"
+                        value={formData.Status} onChange={e => setFormData({...formData, Status: e.target.value})}
+                      >
+                        <option value="ATIVO">ATIVO</option>
+                        <option value="INATIVO">INATIVO</option>
+                      </select>
+                    </div>
 
-                <div className="space-y-1 md:col-span-2">
-                  <label className="text-sm font-bold text-slate-700">Descrição Padrão</label>
-                  <input required type="text" className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 uppercase"
-                    value={formData.Descrição} onChange={e => setFormData({...formData, Descrição: e.target.value.toUpperCase()})}
-                  />
-                  <p className="text-[11px] text-slate-500 flex items-start gap-1 mt-1">
-                    <Info className="w-3 h-3 shrink-0" />
-                    A descrição é forçada em MAIÚSCULAS para manter o padrão visual exigido pela maioria dos ERPs do mercado.
-                  </p>
-                </div>
+                    <div className="space-y-1 md:col-span-2">
+                      <label className="text-sm font-bold text-slate-700">Descrição Padrão</label>
+                      <input required type="text" className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 uppercase outline-none"
+                        value={formData.Descrição} onChange={e => setFormData({...formData, Descrição: e.target.value.toUpperCase()})}
+                      />
+                      <p className="text-[11px] text-slate-500 flex items-start gap-1 mt-1">
+                        <i className="fas fa-info-circle mt-0.5 text-slate-400"></i>
+                        A descrição é forçada em MAIÚSCULAS para manter o padrão visual exigido pela maioria dos ERPs do mercado.
+                      </p>
+                    </div>
 
-                <div className="space-y-1 md:col-span-2">
-                  <label className="text-sm font-bold text-slate-700 flex justify-between">
-                    Especificação Técnica
-                    <span className="text-xs font-normal text-slate-500">(Detalhe dimensões, cor, material)</span>
-                  </label>
-                  <textarea rows="3" className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900"
-                    value={formData.Especificação} onChange={e => setFormData({...formData, Especificação: e.target.value})}
-                  ></textarea>
-                  <p className="text-[11px] text-slate-500 flex items-start gap-1 mt-1">
-                    <Info className="w-3 h-3 shrink-0" />
-                    Seja claro e evite abreviações não padronizadas. Nosso algoritmo lerá este campo para classificar medidas (ex: 500x500mm, 250g) e cores automaticamente na tabela central.
-                  </p>
-                </div>
+                    <div className="space-y-1 md:col-span-2">
+                      <label className="text-sm font-bold text-slate-700 flex justify-between">
+                        Especificação Técnica
+                        <span className="text-xs font-normal text-slate-500">(Detalhe dimensões, cor, material)</span>
+                      </label>
+                      <textarea rows="3" className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 outline-none"
+                        value={formData.Especificação} onChange={e => setFormData({...formData, Especificação: e.target.value})}
+                      ></textarea>
+                      <p className="text-[11px] text-slate-500 flex items-start gap-1 mt-1">
+                        <i className="fas fa-info-circle mt-0.5 text-slate-400"></i>
+                        Seja claro e evite abreviações não padronizadas. Nosso algoritmo lerá este campo para classificar medidas (ex: 500x500mm, 250g) e cores automaticamente.
+                      </p>
+                    </div>
 
-                <div className="space-y-1">
-                  <label className="text-sm font-bold text-slate-700">Tipo de Material</label>
-                  <input type="text" className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 uppercase"
-                    value={formData.Tipo} onChange={e => setFormData({...formData, Tipo: e.target.value.toUpperCase()})} placeholder="Ex: MC, SV, AI..."
-                  />
-                </div>
+                    <div className="space-y-1">
+                      <label className="text-sm font-bold text-slate-700">Tipo de Material</label>
+                      <input type="text" className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 uppercase outline-none"
+                        value={formData.Tipo} onChange={e => setFormData({...formData, Tipo: e.target.value.toUpperCase()})} placeholder="Ex: MC, SV, AI..."
+                      />
+                    </div>
 
-                <div className="space-y-1">
-                  <label className="text-sm font-bold text-slate-700">Unidade de Medida</label>
-                  <input type="text" className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 uppercase"
-                    value={formData['Unidade Medida']} onChange={e => setFormData({...formData, 'Unidade Medida': e.target.value.toUpperCase()})} placeholder="Ex: UN, KG, PC..."
-                  />
-                </div>
+                    <div className="space-y-1">
+                      <label className="text-sm font-bold text-slate-700">Unidade de Medida</label>
+                      <input type="text" className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 uppercase outline-none"
+                        value={formData['Unidade Medida']} onChange={e => setFormData({...formData, 'Unidade Medida': e.target.value.toUpperCase()})} placeholder="Ex: UN, KG, PC..."
+                      />
+                    </div>
 
-                <div className="space-y-1 md:col-span-2">
-                  <label className="text-sm font-bold text-slate-700">Conta Contábil</label>
-                  <input type="text" className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900"
-                    value={formData['Conta Contábil']} onChange={e => setFormData({...formData, 'Conta Contábil': e.target.value})}
-                  />
+                    <div className="space-y-1 md:col-span-2">
+                      <label className="text-sm font-bold text-slate-700">Conta Contábil</label>
+                      <input type="text" className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 outline-none"
+                        value={formData['Conta Contábil']} onChange={e => setFormData({...formData, 'Conta Contábil': e.target.value})}
+                      />
+                    </div>
+                  </form>
                 </div>
-              </form>
+                
+                <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex justify-end gap-3">
+                  <button type="button" onClick={closeModal} className="px-4 py-2 border border-slate-300 text-slate-700 font-medium rounded-lg hover:bg-slate-100 transition-colors">
+                    Cancelar
+                  </button>
+                  <button type="submit" form="productForm" className="px-4 py-2 bg-slate-900 text-white font-medium rounded-lg hover:bg-slate-800 transition-colors shadow-sm">
+                    Salvar Alterações
+                  </button>
+                </div>
+              </div>
             </div>
-            
-            <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex justify-end gap-3">
-              <button type="button" onClick={closeModal} className="px-4 py-2 border border-slate-300 text-slate-700 font-medium rounded-lg hover:bg-slate-100 transition-colors">
-                Cancelar
-              </button>
-              <button type="submit" form="productForm" className="px-4 py-2 bg-slate-900 text-white font-medium rounded-lg hover:bg-slate-800 transition-colors shadow-sm">
-                Salvar Alterações
-              </button>
-            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Sub-componente de KPI
+    function KPICard({ title, value, icon, color }) {
+      return (
+        <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex items-center gap-4">
+          <div className={`w-12 h-12 flex items-center justify-center rounded-xl ${color}`}>
+            <i className={`${icon} text-xl`}></i>
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-slate-500">{title}</p>
+            <p className="text-2xl font-black text-slate-900 tracking-tight">{value}</p>
           </div>
         </div>
-      )}
+      );
+    }
 
-    </div>
-  );
-}
-
-// KPI Card Sub-component
-function KPICard({ title, value, icon, color }) {
-  return (
-    <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex items-center gap-4">
-      <div className={`p-3 rounded-xl ${color}`}>
-        {icon}
-      </div>
-      <div>
-        <p className="text-sm font-semibold text-slate-500">{title}</p>
-        <p className="text-2xl font-black text-slate-900 tracking-tight">{value}</p>
-      </div>
-    </div>
-  );
-}
+    // Inicializa a renderização
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
