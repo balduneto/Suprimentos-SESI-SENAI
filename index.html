@@ -45,19 +45,54 @@
 00040026;ACETATO DE ZINCO DIHIDRATADO P.A - 500G;"Fórmula: (CH3COO)2Zn * 2 H2O; Peso Molecular: 219.49 g/mol; Ensaio: 99.5 %; CAS: 5970-45-6; Densidade de 1.74 g/cm3 (20 °C), com FISPQ e certificado de análise. Frasco com 250 g. Prazo de validade do item: não deve ser inferior a 80% da validade total.";MC;UN;31010309004;ATIVO`;
 
     // --- FUNÇÕES UTILITÁRIAS ---
-    // Analisador robusto de CSV
-    const parseCSVLine = (text) => {
-      let ret = [''], i = 0, p = '', s = true;
-      for (let l = text.length; i < l; i++) {
+    // Analisador robusto de CSV (Suporta quebras de linha dentro das aspas)
+    const parseCSVText = (text) => {
+      let rows = [];
+      let currentRow = [];
+      let currentCell = '';
+      let insideQuotes = false;
+      
+      for (let i = 0; i < text.length; i++) {
         let c = text[i];
+        let nextC = text[i+1];
+        
         if (c === '"') {
-          if (s && c === '"') s = !s;
-          else if (!s && i + 1 < l && text[i + 1] === '"') { ret[ret.length - 1] += '"'; i++; }
-          else if (!s && c === '"') s = !s;
-        } else if (c === ';' && s) { ret.push(''); }
-        else { ret[ret.length - 1] += c; }
+          if (insideQuotes && nextC === '"') {
+            currentCell += '"';
+            i++; // pula a aspa escapada do Excel
+          } else {
+            insideQuotes = !insideQuotes;
+          }
+        } else if (c === ';' && !insideQuotes) {
+          currentRow.push(currentCell.trim());
+          currentCell = '';
+        } else if (c === '\n' && !insideQuotes) {
+          currentRow.push(currentCell.trim());
+          if (currentRow.join('') !== '') rows.push(currentRow);
+          currentRow = [];
+          currentCell = '';
+        } else if (c === '\r' && !insideQuotes) {
+          if (nextC === '\n') {
+            currentRow.push(currentCell.trim());
+            if (currentRow.join('') !== '') rows.push(currentRow);
+            currentRow = [];
+            currentCell = '';
+            i++; // pula o \n que vem junto no Windows
+          } else {
+            currentRow.push(currentCell.trim());
+            if (currentRow.join('') !== '') rows.push(currentRow);
+            currentRow = [];
+            currentCell = '';
+          }
+        } else {
+          currentCell += c;
+        }
       }
-      return ret.map(v => v.trim());
+      if (currentCell !== '' || currentRow.length > 0) {
+        currentRow.push(currentCell.trim());
+        if (currentRow.join('') !== '') rows.push(currentRow);
+      }
+      return rows;
     };
 
     // Inteligência para extrair medidas e cores
@@ -101,17 +136,32 @@
       }, []);
 
       const loadCSVData = (csvText) => {
-        // Correção para quebra de linha do Windows (\r\n) ou Linux (\n)
-        const lines = csvText.trim().split(/\r?\n/);
-        const headers = parseCSVLine(lines[0]);
-        const parsedData = lines.slice(1).map(line => {
-          const values = parseCSVLine(line);
+        const rows = parseCSVText(csvText);
+        if (rows.length < 2) return;
+
+        const rawHeaders = rows[0];
+        
+        // Normaliza os cabeçalhos para evitar problemas se o ERP exportar sem acento (ex: ESPECIFICACAO, Especificação, etc)
+        const headers = rawHeaders.map(h => {
+          const clean = normalizeText(h);
+          if (clean.includes("especifica")) return "Especificação";
+          if (clean.includes("descri")) return "Descrição";
+          if (clean.includes("conta cont")) return "Conta Contábil";
+          if (clean.includes("unidade")) return "Unidade Medida";
+          if (clean.includes("produto") || clean.includes("codigo")) return "Produto";
+          if (clean.includes("tipo")) return "Tipo";
+          if (clean.includes("status")) return "Status";
+          return h;
+        });
+
+        const parsedData = rows.slice(1).map(values => {
           const obj = {};
           headers.forEach((header, index) => {
             obj[header] = values[index] || '';
           });
           return obj;
         });
+        
         setData(parsedData.filter(item => item.Produto));
       };
 
