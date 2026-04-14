@@ -5,33 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SupplyClean - Gestão de PDM</title>
   
-  <!-- Carregando Tailwind CSS para os Estilos -->
   <script src="https://cdn.tailwindcss.com"></script>
-  
-  <!-- Carregando FontAwesome para os Ícones -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  
-  <!-- Carregando React e ReactDOM -->
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-  
-  <!-- Carregando Babel para traduzir o JSX direto no navegador -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
   <style>
     body { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+    .hide-scroll::-webkit-scrollbar { display: none; }
+    .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
 
-  <!-- A aplicação React será renderizada dentro desta div -->
   <div id="root"></div>
 
-  <!-- Script da Aplicação -->
   <script type="text/babel">
     const { useState, useEffect, useMemo } = React;
 
-    // --- DADOS MOCK INICIAIS BASEADOS NA SUA PLANILHA ---
     const initialSnippet = `Produto;Descrição;Especificação;Tipo;Unidade Medida;Conta Contábil;Status
 00001304;ABACATE;;MC;KG;31010306;ATIVO
 00001305;ABACAXI;;MC;PC;31010306;ATIVO
@@ -44,7 +36,6 @@
 00040025;ENVELOPE MEIO SACO;Serviço de confecção de envelope meio saco;SV;SV;31010618;ATIVO
 00040026;ACETATO DE ZINCO DIHIDRATADO P.A - 500G;"Fórmula: (CH3COO)2Zn * 2 H2O; Peso Molecular: 219.49 g/mol; Ensaio: 99.5 %; CAS: 5970-45-6; Densidade de 1.74 g/cm3 (20 °C), com FISPQ e certificado de análise. Frasco com 250 g. Prazo de validade do item: não deve ser inferior a 80% da validade total.";MC;UN;31010309004;ATIVO`;
 
-    // --- FUNÇÕES UTILITÁRIAS ---
     const parseCSVText = (text) => {
       let rows = [];
       let currentRow = [];
@@ -98,7 +89,6 @@
       return text.toString().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
     };
 
-    // Função para mapear Conta Contábil -> Categoria de Produto
     const getCategoryByConta = (conta) => {
       if (!conta) return 'Não Classificada';
       const c = String(conta).trim();
@@ -112,7 +102,6 @@
       return 'Outros Materiais/Serviços';
     };
 
-    // ALGORITMO DE SIMILARIDADE
     const getBigrams = (str) => {
       const bigrams = [];
       for (let i = 0; i < str.length - 1; i++) { bigrams.push(str.slice(i, i + 2)); }
@@ -136,31 +125,30 @@
       return Math.round((2.0 * intersection) / (bg1.length + bg2.length) * 100);
     };
 
-    // --- COMPONENTE PRINCIPAL ---
     function App() {
       const [data, setData] = useState([]);
       const [globalSearch, setGlobalSearch] = useState('');
-      const [filters, setFilters] = useState({
-        Status: '', Tipo: '', 'Unidade Medida': '', 'Conta Contábil': ''
-      });
+      const [filters, setFilters] = useState({ Status: '', Tipo: '', 'Unidade Medida': '', 'Conta Contábil': '' });
       const [isModalOpen, setIsModalOpen] = useState(false);
       const [editingItem, setEditingItem] = useState(null);
       const [currentPage, setCurrentPage] = useState(1);
       const itemsPerPage = 10;
 
+      // Estados do Radar de Duplicidades
+      const [isAnalyzing, setIsAnalyzing] = useState(false);
+      const [duplicateView, setDuplicateView] = useState(false);
+      const [duplicateData, setDuplicateData] = useState([]);
+
       const [formData, setFormData] = useState({
         Produto: '', Descrição: '', Especificação: '', Tipo: '', 'Unidade Medida': '', 'Conta Contábil': '', Status: 'ATIVO'
       });
 
-      useEffect(() => {
-        loadCSVData(initialSnippet);
-      }, []);
+      useEffect(() => { loadCSVData(initialSnippet); }, []);
 
       const loadCSVData = (csvText) => {
         const rows = parseCSVText(csvText);
         if (rows.length < 2) return;
         const rawHeaders = rows[0];
-        
         const headers = rawHeaders.map(h => {
           const clean = normalizeText(h);
           if (clean.includes("especifica")) return "Especificação";
@@ -175,13 +163,12 @@
 
         const parsedData = rows.slice(1).map(values => {
           const obj = {};
-          headers.forEach((header, index) => {
-            obj[header] = values[index] || '';
-          });
+          headers.forEach((header, index) => { obj[header] = values[index] || ''; });
           return obj;
         });
         
         setData(parsedData.filter(item => item.Produto));
+        setDuplicateView(false); // Reseta a visão de duplicidade ao carregar novo CSV
       };
 
       const handleFileUpload = (e) => {
@@ -193,22 +180,79 @@
         }
       };
 
-      // Extrator de Itens Mais Comuns
+      // MOTOR DE DETECÇÃO DE DUPLICIDADES
+      const analyzeDuplicates = () => {
+        if (duplicateView) {
+          setDuplicateView(false); // Se já estiver na visão, volta ao normal
+          return;
+        }
+
+        setIsAnalyzing(true);
+        // Timeout para permitir que o React renderize o estado de "Analisando..." antes de travar o processo pesado
+        setTimeout(() => {
+          const groups = {};
+          // 1. Agrupamento pela primeira palavra (Heurística para ganhar performance O(n^2) -> O(n*log n))
+          data.forEach(item => {
+            const firstWord = normalizeText(item.Descrição).split(/[\s-]/)[0] || 'outros';
+            if (!groups[firstWord]) groups[firstWord] = [];
+            groups[firstWord].push(item);
+          });
+
+          let clusterId = 1;
+          const foundDuplicates = [];
+
+          // 2. Varredura dentro de cada grupo
+          Object.values(groups).forEach(group => {
+            if (group.length < 2) return;
+            const processed = new Set();
+            
+            for (let i = 0; i < group.length; i++) {
+              if (processed.has(group[i].Produto)) continue;
+              
+              let currentCluster = [{ ...group[i], _clusterId: clusterId, _isMaster: true, _simScore: 100 }];
+              
+              for (let j = i + 1; j < group.length; j++) {
+                if (processed.has(group[j].Produto)) continue;
+                
+                const sim = calculateSimilarity(group[i].Descrição, group[j].Descrição);
+                // Threshold: Se for > 75% parecido, coloca no mesmo cluster
+                if (sim >= 75) {
+                  currentCluster.push({ ...group[j], _clusterId: clusterId, _isMaster: false, _simScore: sim });
+                  processed.add(group[j].Produto);
+                }
+              }
+              
+              if (currentCluster.length > 1) {
+                foundDuplicates.push(...currentCluster);
+                clusterId++;
+              }
+              processed.add(group[i].Produto);
+            }
+          });
+
+          setDuplicateData(foundDuplicates);
+          setDuplicateView(true);
+          setIsAnalyzing(false);
+          setCurrentPage(1);
+          setGlobalSearch(''); // Limpa a busca padrão para focar nas duplicidades
+        }, 100);
+      };
+
       const commonItems = useMemo(() => {
         const counts = {};
         data.forEach(item => {
           const desc = item.Descrição || '';
           const firstWord = desc.split(/[\s-]/)[0].trim().toUpperCase();
-          if (firstWord && firstWord.length > 2) {
-            counts[firstWord] = (counts[firstWord] || 0) + 1;
-          }
+          if (firstWord && firstWord.length > 2) { counts[firstWord] = (counts[firstWord] || 0) + 1; }
         });
         return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 15).map(entry => entry[0]);
       }, [data]);
 
-      // Filtros e Similaridade
+      // Lógica de Filtro principal decide se usa os dados normais ou os dados de duplicidade
       const filteredData = useMemo(() => {
-        let result = data.filter(item => {
+        const sourceData = duplicateView ? duplicateData : data;
+
+        let result = sourceData.filter(item => {
           const searchStr = normalizeText(Object.values(item).join(' '));
           const searchTerms = normalizeText(globalSearch).trim().split(/\s+/);
           const matchesSearch = searchTerms.every(term => searchStr.includes(term));
@@ -221,7 +265,8 @@
           return matchesSearch && matchesStatus && matchesTipo && matchesUnidade && matchesConta;
         });
 
-        if (globalSearch.trim()) {
+        // Só calcula score de busca livre se NÃO estiver na visão de duplicidades
+        if (globalSearch.trim() && !duplicateView) {
           result = result.map(item => ({
             ...item,
             _simScore: calculateSimilarity(globalSearch, item.Descrição)
@@ -229,24 +274,21 @@
         }
 
         return result;
-      }, [data, globalSearch, filters]);
+      }, [data, duplicateData, duplicateView, globalSearch, filters]);
 
       const totalPages = Math.ceil(filteredData.length / itemsPerPage);
       const currentData = filteredData.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
-      // KPIs Dinâmicos
       const totalItems = filteredData.length;
       const activeItems = filteredData.filter(d => d.Status?.toUpperCase() === 'ATIVO').length;
       const inactiveItems = filteredData.filter(d => d.Status?.toUpperCase() === 'INATIVO').length;
       const uniqueTypes = new Set(filteredData.map(d => d.Tipo)).size;
 
-      // Opções únicas para filtros
       const uniqueStatuses = [...new Set(data.map(d => d.Status?.toUpperCase()))].filter(Boolean).sort();
       const uniqueTipos = [...new Set(data.map(d => d.Tipo?.toUpperCase()))].filter(Boolean).sort();
       const uniqueUnidades = [...new Set(data.map(d => d['Unidade Medida']?.toUpperCase()))].filter(Boolean).sort();
       const uniqueContas = [...new Set(data.map(d => d['Conta Contábil']))].filter(Boolean).sort();
 
-      // Exportação
       const handleExportCSV = (exportType = 'ALL') => {
         let dataToExport = data;
         
@@ -255,14 +297,16 @@
           if (dataToExport.length === 0) { alert('Nenhum produto novo foi cadastrado nesta sessão.'); return; }
         } else if (exportType === 'FILTERED') {
           dataToExport = filteredData;
-          if (dataToExport.length === 0) { alert('Não há itens nos filtros atuais para exportar.'); return; }
+          if (dataToExport.length === 0) { alert('Não há itens para exportar.'); return; }
+        } else if (exportType === 'DUPLICATES') {
+          dataToExport = duplicateData;
+          if (dataToExport.length === 0) { alert('Execute o Radar de Duplicidades primeiro.'); return; }
         } else if (data.length === 0) {
           return;
         }
 
         const headersOriginal = Object.keys(data[0] || {}).filter(k => !k.startsWith('_'));
-        // Adiciona colunas extras calculadas para a exportação
-        const exportHeaders = [...headersOriginal, 'Categoria Contábil', 'Faixa de Similaridade'];
+        const exportHeaders = [...headersOriginal, 'Categoria Contábil', 'Faixa de Similaridade', 'Cluster Duplicidade'];
         
         const csvContent = [
           exportHeaders.join(';'),
@@ -276,11 +320,11 @@
               return val;
             });
             
-            // Cálculos Automáticos para o Relatório
             const catContabil = getCategoryByConta(row['Conta Contábil']);
             const simScoreText = row._simScore !== undefined ? (row._simScore >= 80 ? 'ALTA' : row._simScore >= 40 ? 'MÉDIA' : 'BAIXA') : '-';
-            
-            return [...originalValues, catContabil, simScoreText].join(';');
+            const clusterId = row._clusterId !== undefined ? `Grupo ${row._clusterId}` : '-';
+
+            return [...originalValues, catContabil, simScoreText, clusterId].join(';');
           })
         ].join('\n');
 
@@ -291,6 +335,7 @@
         let filePrefix = 'Cadastro_Completo';
         if (exportType === 'NEW') filePrefix = 'Novos_Produtos';
         if (exportType === 'FILTERED') filePrefix = 'Produtos_Filtrados';
+        if (exportType === 'DUPLICATES') filePrefix = 'Itens_Duplicados';
         
         link.setAttribute('download', `${filePrefix}_${new Date().toISOString().slice(0,10)}.csv`);
         document.body.appendChild(link);
@@ -304,7 +349,6 @@
         setCurrentPage(1);
       };
 
-      // CRUD
       const openModal = (item = null) => {
         if (item) {
           setEditingItem(item);
@@ -324,10 +368,16 @@
 
       const handleSave = (e) => {
         e.preventDefault();
+        let updatedData;
         if (editingItem) {
-          setData(data.map(d => d.Produto === formData.Produto ? formData : d));
+          updatedData = data.map(d => d.Produto === formData.Produto ? formData : d);
         } else {
-          setData([{...formData, Status: 'NOVO', _isNew: true}, ...data]);
+          updatedData = [{...formData, Status: 'NOVO', _isNew: true}, ...data];
+        }
+        setData(updatedData);
+        // Atualiza a visão de duplicidades se estiver aberta
+        if (duplicateView) {
+            setDuplicateData(duplicateData.map(d => d.Produto === formData.Produto ? { ...formData, _clusterId: d._clusterId, _isMaster: d._isMaster, _simScore: d._simScore } : d));
         }
         closeModal();
       };
@@ -335,13 +385,16 @@
       const handleDelete = (id) => {
         if (window.confirm('Tem certeza que deseja excluir este item permanentemente?')) {
           setData(data.filter(d => d.Produto !== id));
+          if (duplicateView) setDuplicateData(duplicateData.filter(d => d.Produto !== id));
         }
       };
 
-      // Troca rápida de status (Toggle)
       const toggleStatus = (item) => {
         const novoStatus = item.Status?.toUpperCase() === 'ATIVO' ? 'INATIVO' : 'ATIVO';
         setData(data.map(d => d.Produto === item.Produto ? { ...d, Status: novoStatus } : d));
+        if (duplicateView) {
+            setDuplicateData(duplicateData.map(d => d.Produto === item.Produto ? { ...d, Status: novoStatus } : d));
+        }
       };
 
       return (
@@ -365,17 +418,20 @@
                   <span>Importar CSV</span>
                   <input type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
                 </label>
-                <button onClick={() => handleExportCSV('NEW')} className="bg-white border border-amber-200 hover:bg-amber-50 text-amber-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-sm">
-                  <i className="fas fa-star text-amber-500"></i>
-                  <span>Exportar Novos</span>
+                
+                {/* BOTÃO DO RADAR DE DUPLICIDADES */}
+                <button 
+                  onClick={analyzeDuplicates} 
+                  disabled={isAnalyzing}
+                  className={`${duplicateView ? 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-700' : 'bg-indigo-50 border-indigo-200 hover:bg-indigo-100 text-indigo-700'} border px-3 py-2 rounded-lg text-sm font-bold transition-colors flex items-center gap-2 shadow-sm`}
+                >
+                  {isAnalyzing ? <i className="fas fa-circle-notch fa-spin"></i> : <i className="fas fa-radar"></i>}
+                  <span>{duplicateView ? 'Voltar Lista Completa' : 'Radar de Duplicidades'}</span>
                 </button>
-                <button onClick={() => handleExportCSV('FILTERED')} className="bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-sm">
-                  <i className="fas fa-filter text-indigo-500"></i>
-                  <span>Exportar Filtrados</span>
-                </button>
-                <button onClick={() => handleExportCSV('ALL')} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-sm">
-                  <i className="fas fa-download text-slate-500"></i>
-                  <span>Exportar Tudo</span>
+
+                <button onClick={() => handleExportCSV(duplicateView ? 'DUPLICATES' : 'FILTERED')} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-sm">
+                  <i className="fas fa-file-export text-slate-500"></i>
+                  <span>{duplicateView ? 'Exportar Duplicados' : 'Exportar Filtrados'}</span>
                 </button>
                 <button onClick={() => openModal()} className="bg-slate-900 hover:bg-slate-800 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-sm">
                   <i className="fas fa-plus"></i>
@@ -383,7 +439,6 @@
                 </button>
               </div>
 
-              {/* Divisor e Logo */}
               <div className="hidden xl:block w-px h-8 bg-slate-200 shrink-0"></div>
               <img 
                 src="https://i.postimg.cc/qMYYkYbk/marca-CONJUNTAS-SESI-SENAI-2024-completa-colorida.png" 
@@ -394,82 +449,88 @@
           </header>
 
           <main className="max-w-[1400px] mx-auto px-6 mt-8">
-            <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-5 mb-8 flex flex-col md:flex-row gap-4 items-start shadow-sm">
-              <div className="bg-indigo-100 p-3 rounded-xl text-indigo-700 shrink-0">
-                <i className="fas fa-lightbulb text-xl px-1"></i>
+            {/* Aviso visual quando está no Modo Duplicidade */}
+            {duplicateView && (
+              <div className="bg-indigo-900 border border-indigo-800 rounded-xl p-5 mb-8 flex flex-col md:flex-row gap-4 items-center shadow-lg transform transition-all">
+                <div className="bg-white/10 p-3 rounded-full text-white shrink-0">
+                  <i className="fas fa-exclamation-triangle text-xl"></i>
+                </div>
+                <div className="text-white flex-1">
+                  <h2 className="text-lg font-bold mb-1">Modo Raio-X Ativado: Possíveis Duplicidades</h2>
+                  <p className="text-sm text-indigo-200">
+                    O algoritmo varreu toda a sua base e agrupou os itens que possuem <strong>75% ou mais de similaridade</strong> entre si. Compare-os abaixo e utilize o botão <i className="fas fa-toggle-on text-emerald-400"></i> para inativar as versões incorretas, mantendo apenas um item principal ativo por grupo.
+                  </p>
+                </div>
+                <div className="shrink-0 text-center">
+                  <span className="block text-3xl font-black text-white">{new Set(duplicateData.map(d => d._clusterId)).size}</span>
+                  <span className="text-xs text-indigo-300 uppercase font-bold tracking-wider">Grupos Suspeitos</span>
+                </div>
               </div>
-              <div>
-                <h2 className="text-lg font-bold text-indigo-900 mb-1">Novidades da Atualização</h2>
-                <ul className="text-sm text-indigo-800 space-y-1.5 ml-5 list-disc marker:text-indigo-400">
-                  <li><strong>Classificação Automática:</strong> As Contas Contábeis agora são convertidas automaticamente em <em>Categorias de Produto</em>.</li>
-                  <li><strong>Exportação Inteligente:</strong> O botão "Exportar Filtrados" permite extrair apenas os dados da tela atual. O relatório agora também inclui as colunas de "Categoria" e "Faixa de Similaridade".</li>
-                  <li><strong>Edição Expressa:</strong> Clique no <i className="fas fa-toggle-on text-emerald-600"></i> na coluna de ações para inverter o status de um item sem abrir o formulário.</li>
-                </ul>
-              </div>
-            </div>
+            )}
 
             {/* KPIs */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-              <KPICard title="Itens Encontrados" value={totalItems} icon="fas fa-list" color="bg-blue-50 text-blue-700" />
+              <KPICard title={duplicateView ? "Itens Suspeitos" : "Itens Encontrados"} value={totalItems} icon={duplicateView ? "fas fa-copy" : "fas fa-list"} color={duplicateView ? "bg-indigo-50 text-indigo-700" : "bg-blue-50 text-blue-700"} />
               <KPICard title="Itens Ativos" value={activeItems} icon="fas fa-check-circle" color="bg-emerald-50 text-emerald-700" />
               <KPICard title="Itens Inativos" value={inactiveItems} icon="fas fa-times-circle" color="bg-rose-50 text-rose-700" />
               <KPICard title="Categorias (Tipo)" value={uniqueTypes} icon="fas fa-chart-line" color="bg-purple-50 text-purple-700" />
             </div>
 
-            {/* Filtros e Busca */}
-            <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col gap-4">
-              
-              <div className="flex flex-col lg:flex-row gap-4 items-center w-full">
-                <div className="relative w-full lg:w-2/3">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <i className="fas fa-search text-slate-400"></i>
+            {/* Filtros e Busca (Escondido parcialmente no modo duplicidade para não confundir) */}
+            {!duplicateView && (
+              <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col gap-4">
+                <div className="flex flex-col lg:flex-row gap-4 items-center w-full">
+                  <div className="relative w-full lg:w-2/3">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <i className="fas fa-search text-slate-400"></i>
+                    </div>
+                    <input
+                      type="text"
+                      className="block w-full pl-10 pr-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 sm:text-sm bg-slate-50 transition-all outline-none"
+                      placeholder="Busca avançada (código, descrição, especificação)..."
+                      value={globalSearch}
+                      onChange={(e) => setGlobalSearch(e.target.value)}
+                    />
                   </div>
-                  <input
-                    type="text"
-                    className="block w-full pl-10 pr-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 sm:text-sm bg-slate-50 transition-all outline-none"
-                    placeholder="Busca avançada (código, descrição, especificação)..."
-                    value={globalSearch}
+                  <select 
+                    className="block w-full lg:w-1/3 py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 sm:text-sm bg-slate-50 outline-none text-slate-700 font-medium"
                     onChange={(e) => setGlobalSearch(e.target.value)}
-                  />
+                    value={commonItems.some(item => normalizeText(item) === normalizeText(globalSearch)) ? globalSearch.toUpperCase() : ''}
+                  >
+                    <option value="">Buscar itens comuns (Top 15)...</option>
+                    {commonItems.map(item => (
+                      <option key={item} value={item}>{item}</option>
+                    ))}
+                  </select>
                 </div>
-                <select 
-                  className="block w-full lg:w-1/3 py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 sm:text-sm bg-slate-50 outline-none text-slate-700 font-medium"
-                  onChange={(e) => setGlobalSearch(e.target.value)}
-                  value={commonItems.some(item => normalizeText(item) === normalizeText(globalSearch)) ? globalSearch.toUpperCase() : ''}
-                >
-                  <option value="">Buscar itens comuns (Top 15)...</option>
-                  {commonItems.map(item => (
-                    <option key={item} value={item}>{item}</option>
-                  ))}
-                </select>
-              </div>
 
-              <div className="flex flex-wrap items-center gap-3 w-full">
-                <div className="flex items-center gap-2 text-sm font-medium text-slate-600">
-                  <i className="fas fa-filter"></i> Filtros:
+                <div className="flex flex-wrap items-center gap-3 w-full">
+                  <div className="flex items-center gap-2 text-sm font-medium text-slate-600">
+                    <i className="fas fa-filter"></i> Filtros:
+                  </div>
+                  <select className="border border-slate-300 rounded-lg text-sm p-2 bg-white flex-1 min-w-[120px] outline-none" value={filters.Status} onChange={(e) => setFilters({...filters, Status: e.target.value})}>
+                    <option value="">Status (Todos)</option>
+                    {uniqueStatuses.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <select className="border border-slate-300 rounded-lg text-sm p-2 bg-white flex-1 min-w-[120px] outline-none" value={filters.Tipo} onChange={(e) => setFilters({...filters, Tipo: e.target.value})}>
+                    <option value="">Tipo (Todos)</option>
+                    {uniqueTipos.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <select className="border border-slate-300 rounded-lg text-sm p-2 bg-white flex-1 min-w-[120px] outline-none" value={filters['Unidade Medida']} onChange={(e) => setFilters({...filters, 'Unidade Medida': e.target.value})}>
+                    <option value="">Unidade (Todas)</option>
+                    {uniqueUnidades.map(u => <option key={u} value={u}>{u}</option>)}
+                  </select>
+                  <select className="border border-slate-300 rounded-lg text-sm p-2 bg-white flex-[2] min-w-[180px] outline-none" value={filters['Conta Contábil']} onChange={(e) => setFilters({...filters, 'Conta Contábil': e.target.value})}>
+                    <option value="">Conta Contábil (Todas)</option>
+                    {uniqueContas.map(c => <option key={c} value={c}>{c} - {getCategoryByConta(c)}</option>)}
+                  </select>
+                  
+                  <button onClick={clearAllFilters} className="bg-rose-50 text-rose-600 hover:bg-rose-100 hover:text-rose-700 px-3 py-2 rounded-lg text-sm font-bold flex items-center gap-2 border border-rose-200 transition-colors">
+                    <i className="fas fa-eraser"></i> Limpar Filtros
+                  </button>
                 </div>
-                <select className="border border-slate-300 rounded-lg text-sm p-2 bg-white flex-1 min-w-[120px] outline-none" value={filters.Status} onChange={(e) => setFilters({...filters, Status: e.target.value})}>
-                  <option value="">Status (Todos)</option>
-                  {uniqueStatuses.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-                <select className="border border-slate-300 rounded-lg text-sm p-2 bg-white flex-1 min-w-[120px] outline-none" value={filters.Tipo} onChange={(e) => setFilters({...filters, Tipo: e.target.value})}>
-                  <option value="">Tipo (Todos)</option>
-                  {uniqueTipos.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-                <select className="border border-slate-300 rounded-lg text-sm p-2 bg-white flex-1 min-w-[120px] outline-none" value={filters['Unidade Medida']} onChange={(e) => setFilters({...filters, 'Unidade Medida': e.target.value})}>
-                  <option value="">Unidade (Todas)</option>
-                  {uniqueUnidades.map(u => <option key={u} value={u}>{u}</option>)}
-                </select>
-                <select className="border border-slate-300 rounded-lg text-sm p-2 bg-white flex-[2] min-w-[180px] outline-none" value={filters['Conta Contábil']} onChange={(e) => setFilters({...filters, 'Conta Contábil': e.target.value})}>
-                  <option value="">Conta Contábil (Todas)</option>
-                  {uniqueContas.map(c => <option key={c} value={c}>{c} - {getCategoryByConta(c)}</option>)}
-                </select>
-                
-                <button onClick={clearAllFilters} className="bg-rose-50 text-rose-600 hover:bg-rose-100 hover:text-rose-700 px-3 py-2 rounded-lg text-sm font-bold flex items-center gap-2 border border-rose-200 transition-colors">
-                  <i className="fas fa-eraser"></i> Limpar Filtros
-                </button>
               </div>
-            </div>
+            )}
 
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
               <div className="overflow-x-auto">
@@ -480,18 +541,25 @@
                       <th className="px-4 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider w-1/4">Descrição</th>
                       <th className="px-4 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider w-1/4">Análise Técnica</th>
                       <th className="px-4 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Classificação Contábil</th>
-                      <th className="px-4 py-3 text-center text-xs font-bold text-slate-600 uppercase tracking-wider">Grau de Similaridade</th>
+                      <th className="px-4 py-3 text-center text-xs font-bold text-slate-600 uppercase tracking-wider">
+                        {duplicateView ? 'Grupo de Duplicidade' : 'Similaridade (Busca)'}
+                      </th>
                       <th className="px-4 py-3 text-center text-xs font-bold text-slate-600 uppercase tracking-wider">Status</th>
                       <th className="px-4 py-3 text-right text-xs font-bold text-slate-600 uppercase tracking-wider">Ações</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-slate-200">
-                    {currentData.length > 0 ? currentData.map((item) => {
+                    {currentData.length > 0 ? currentData.map((item, index) => {
                       const features = extractFeatures(item.Especificação);
                       const categoria = getCategoryByConta(item['Conta Contábil']);
+                      
+                      // Estilização alternada para agrupar os clusters visualmente
+                      const isEvenCluster = item._clusterId ? item._clusterId % 2 === 0 : false;
+                      const rowClass = duplicateView ? (isEvenCluster ? 'bg-indigo-50/30' : 'bg-white') : 'hover:bg-slate-50 transition-colors';
+
                       return (
-                        <tr key={item.Produto} className="hover:bg-slate-50 transition-colors group">
-                          <td className="px-4 py-4 whitespace-nowrap text-sm font-semibold text-slate-900">
+                        <tr key={item.Produto + index} className={`${rowClass} group border-b border-slate-100`}>
+                          <td className="px-4 py-4 whitespace-nowrap text-sm font-semibold text-slate-900 border-l-4" style={{ borderColor: duplicateView ? (isEvenCluster ? '#818cf8' : '#e2e8f0') : 'transparent' }}>
                             {item.Produto}
                             {item._isNew && <span className="ml-2 block mt-1 w-max px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">NOVO</span>}
                           </td>
@@ -503,11 +571,8 @@
                               <div className="flex flex-col gap-1.5">
                                 <p className="line-clamp-2 text-[11px] text-slate-500 italic" title={item.Especificação}>"{item.Especificação}"</p>
                                 <div className="flex flex-wrap gap-1.5">
-                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
                                     Medidas: {features.medida}
-                                  </span>
-                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-100">
-                                    Cor/Mat: {features.cor}
                                   </span>
                                 </div>
                               </div>
@@ -518,36 +583,41 @@
                           <td className="px-4 py-4 whitespace-nowrap text-sm text-slate-600">
                             <div className="flex flex-col gap-1 text-[11px]">
                               <span className="font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded w-max" title="Categoria Contábil do Produto">
-                                <i className="fas fa-tags text-indigo-400 mr-1"></i> {categoria}
+                                {categoria}
                               </span>
-                              <span className="flex items-center gap-1 mt-1"><i className="fas fa-hashtag text-slate-400"></i> Conta: {item['Conta Contábil']}</span>
-                              <span className="flex items-center gap-1"><i className="fas fa-box text-slate-400"></i> Tipo: {item.Tipo} | UN: {item['Unidade Medida']}</span>
+                              <span className="flex items-center gap-1 mt-1">Conta: {item['Conta Contábil']}</span>
                             </div>
                           </td>
                           
-                          {/* COLUNA DE FAIXA DE SIMILARIDADE */}
                           <td className="px-4 py-4 whitespace-nowrap text-center">
-                            {globalSearch.trim() && item._simScore !== undefined ? (
-                              <div className="flex flex-col items-center gap-1.5">
-                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                                  item._simScore >= 80 ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 
-                                  item._simScore >= 40 ? 'bg-amber-100 text-amber-800 border border-amber-200' : 
-                                  'bg-rose-100 text-rose-800 border border-rose-200'
-                                }`}>
-                                  {item._simScore >= 80 ? 'ALTA' : item._simScore >= 40 ? 'MÉDIA' : 'BAIXA'}
+                            {duplicateView ? (
+                              <div className="flex flex-col items-center">
+                                <span className={`text-[11px] font-bold px-2 py-1 rounded-full ${item._isMaster ? 'bg-indigo-600 text-white' : 'bg-indigo-100 text-indigo-800'}`}>
+                                  Grupo {item._clusterId}
                                 </span>
-                                <div className="w-20 flex items-center gap-1" title={`Match de ${item._simScore}%`}>
-                                  <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                                    <div 
-                                      className={`h-full ${item._simScore >= 80 ? 'bg-emerald-500' : item._simScore >= 40 ? 'bg-amber-400' : 'bg-rose-500'}`} 
-                                      style={{ width: `${item._simScore}%` }}
-                                    ></div>
-                                  </div>
-                                  <span className="text-[9px] font-bold text-slate-500 w-5 text-right">{item._simScore}%</span>
-                                </div>
+                                {!item._isMaster && <span className="text-[9px] text-slate-500 mt-1">{item._simScore}% idêntico</span>}
                               </div>
                             ) : (
-                              <span className="text-slate-300 text-xs">-</span>
+                              (globalSearch.trim() && item._simScore !== undefined) ? (
+                                <div className="flex flex-col items-center gap-1.5">
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                                    item._simScore >= 80 ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 
+                                    item._simScore >= 40 ? 'bg-amber-100 text-amber-800 border border-amber-200' : 
+                                    'bg-rose-100 text-rose-800 border border-rose-200'
+                                  }`}>
+                                    {item._simScore >= 80 ? 'ALTA' : item._simScore >= 40 ? 'MÉDIA' : 'BAIXA'}
+                                  </span>
+                                  <div className="w-20 flex items-center gap-1" title={`Match de ${item._simScore}%`}>
+                                    <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                      <div 
+                                        className={`h-full ${item._simScore >= 80 ? 'bg-emerald-500' : item._simScore >= 40 ? 'bg-amber-400' : 'bg-rose-500'}`} 
+                                        style={{ width: `${item._simScore}%` }}
+                                      ></div>
+                                    </div>
+                                    <span className="text-[9px] font-bold text-slate-500 w-5 text-right">{item._simScore}%</span>
+                                  </div>
+                                </div>
+                              ) : <span className="text-slate-300 text-xs">-</span>
                             )}
                           </td>
 
@@ -577,7 +647,7 @@
                     }) : (
                       <tr>
                         <td colSpan="7" className="px-6 py-12 text-center text-slate-500">
-                          Nenhum produto encontrado com os filtros aplicados.
+                          {isAnalyzing ? 'Processando milhões de combinações de strings...' : 'Nenhum produto encontrado com os filtros aplicados.'}
                         </td>
                       </tr>
                     )}
@@ -622,7 +692,6 @@
                         value={formData.Produto} readOnly={!!editingItem} 
                         onChange={e => setFormData({...formData, Produto: e.target.value})} 
                       />
-                      {editingItem && <p className="text-[11px] text-slate-500">O código não pode ser alterado na edição.</p>}
                     </div>
                     
                     <div className="space-y-1">
